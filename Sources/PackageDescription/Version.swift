@@ -8,7 +8,7 @@
  See http://swift.org/CONTRIBUTORS.txt for Swift project authors
 
  -------------------------------------------------------------------------
- [A semantic version](http://semver.org).
+ [A semantic version](http://semver.org/spec/v2.0.0.html).
 */
 
 public struct Version {
@@ -17,17 +17,28 @@ public struct Version {
     }
 
     public let (major, minor, patch): (Int, Int, Int)
+    public let prereleaseIdentifiers: [String]
+    public let build: String?
 
-    public init(_ major: Int, _ minor: Int, _ patch: Int) {
+    public init(_ major: Int, _ minor: Int, _ patch: Int, prerelease: String? = nil, build: String? = nil) {
         self.major = Swift.max(major, 0)
         self.minor = Swift.max(minor, 0)
         self.patch = Swift.max(patch, 0)
+        self.prerelease = prerelease
+        self.build = nil
     }
 
     public init?(_ characters: String.CharacterView) {
-        let components = characters.split(".", maxSplit: 2, allowEmptySlices: true).map(String.init).flatMap{ Int($0) }.filter{ $0 >= 0 }
-        guard components.count == 3 else { return nil }
+        let buildSplit = characters.split("+", maxSplit: 1, allowEmptySlices: true).filter { $0.count > 0 }
+        guard let leftOfBuild = buildSplit.first else { return nil }
+        self.build = (buildSplit.count == 2) ? String(buildSplit.last!) : nil
 
+        let prereleaseSplit = leftOfBuild.split("-", maxSplit: 1, allowEmptySlices: true).filter { $0.count > 0 }
+        guard let leftOfPrerelease = prereleaseSplit.first else { return nil }
+        self.prerelease = (prereleaseSplit.count == 2) ? String(prereleaseSplit.last!) : nil
+
+        let components = leftOfPrerelease.split(".", maxSplit: 2, allowEmptySlices: true).map(String.init).flatMap{ Int($0) }.filter{ $0 >= 0 }
+        guard components.count == 3 else { return nil }
         self.major = components[0]
         self.minor = components[1]
         self.patch = components[2]
@@ -51,7 +62,7 @@ public struct Version {
 extension Version: Equatable {}
 
 public func ==(v1: Version, v2: Version) -> Bool {
-    return v1.major == v2.major && v1.minor == v2.minor && v1.patch == v2.patch
+    return v1.major == v2.major && v1.minor == v2.minor && v1.patch == v2.patch && v1.prerelease == v2.prerelease
 }
 
 // MARK: Comparable
@@ -59,7 +70,26 @@ public func ==(v1: Version, v2: Version) -> Bool {
 extension Version: Comparable {}
 
 public func <(lhs: Version, rhs: Version) -> Bool {
-    return [lhs.major, lhs.minor, lhs.patch].lexicographicalCompare([rhs.major, rhs.minor, rhs.patch])
+    if [lhs.major, lhs.minor, lhs.patch].lexicographicalCompare([rhs.major, rhs.minor, rhs.patch]) { return true }
+    switch(lhs.prerelease, rhs.prerelease) {
+    case (let lhs?, let rhs?):
+        return lhs.characters.split(".").lexicographicalCompare(rhs.characters.split(".")){ (lhs, rhs) in
+            switch (Int(String(lhs)), Int(String(rhs))) {
+            case (let lhs?, let rhs?):
+                return lhs < rhs
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                return String(lhs) < String(rhs)
+            }
+        }
+    case (_?, nil):
+        return true
+    default:
+        return false
+    }
 }
 
 // MARK: ForwardIndexType
@@ -97,7 +127,7 @@ extension Version: BidirectionalIndexType, ForwardIndexType {
 
 extension Version: CustomStringConvertible {
     public var description: String {
-        return "\(major).\(minor).\(patch)"
+        return [["\(major).\(minor).\(patch)", prerelease].flatMap { $0 }.joinWithSeparator("-"), build].flatMap { $0 }.joinWithSeparator("+")
     }
 }
 
@@ -139,21 +169,25 @@ public struct Specifier {
     public let major: Int?
     public let minor: Int?
     public let patch: Int?
+    public let prerelease: String?
 
     public static var Any: Specifier {
-        return Specifier(nil, nil, nil)
+        return Specifier(nil, nil, nil, nil)
     }
 
-    private init(_ major: Int?, _ minor: Int?, _ patch: Int?) {
-
+    private init(_ major: Int?, _ minor: Int?, _ patch: Int?, _ prerelease: String? = nil) {
         self.major = major.map{ Swift.max($0, 0) }
         self.minor = minor.map{ Swift.max($0, 0) }
         self.patch = patch.map{ Swift.max($0, 0) }
+        self.prerelease = prerelease
     }
 
     public init?(_ characters: String.CharacterView) {
-        let components = characters.split(".", maxSplit: 2).map(String.init).flatMap{ Int($0) }.filter{ $0 >= 0 }
+        let prereleaseSplit = characters.split("-", maxSplit: 1, allowEmptySlices: true).filter { $0.count > 0 }
+        guard let leftOfPrerelease = prereleaseSplit.first else { return nil }
+        self.prerelease = (prereleaseSplit.count == 2) ? String(prereleaseSplit.last!) : nil
 
+        let components = leftOfPrerelease.split(".", maxSplit: 2).map(String.init).flatMap{ Int($0) }.filter{ $0 >= 0 }
         self.major = components.count >= 1 ? components[0] : nil
         self.minor = components.count >= 2 ? components[1] : nil
         self.patch = components.count >= 3 ? components[2] : nil
@@ -169,7 +203,6 @@ public struct Specifier {
 
     public init(_ major: Int, _ minor: Int, _ patch: Int) {
         self.init(major, minor, patch)
-
     }
 
     public func value(forComponent component: Version.Component) -> Int? {
